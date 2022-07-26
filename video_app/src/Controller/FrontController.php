@@ -3,14 +3,20 @@
 namespace App\Controller;
 
 use App\Entity\Category;
+use App\Entity\Comment;
 use App\Entity\Video;
+use App\Repository\VideoRepository;
 use App\Utils\CategoryTreeFrontPage;
 use Doctrine\Persistence\ManagerRegistry;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\PasswordHasher\Hasher\UserPasswordHasherInterface;
 use Symfony\Component\Routing\Annotation\Route;
+use Symfony\Component\Security\Core\Authentication\Token\UsernamePasswordToken;
 use Symfony\Component\Security\Http\Authentication\AuthenticationUtils;
+use App\Entity\User;
+use App\Form\UserType;
 
 class FrontController extends AbstractController
 {
@@ -22,7 +28,7 @@ class FrontController extends AbstractController
     }
 
     #[Route('/', name: 'main')]
-    public function pysiekLove(): Response
+    public function index(): Response
     {
         return $this->render('front/index.html.twig', [
             'controller_name' => 'FrontController',
@@ -46,10 +52,12 @@ class FrontController extends AbstractController
         ]);
     }
 
-    #[Route('/video-details', name: 'video_details')]
-    public function videoDetails()
+    #[Route('/video-details/{video}', name: 'video_details')]
+    public function videoDetails( VideoRepository $repo, $video)
     {
-        return $this->render('front/video_details.html.twig');
+        return $this->render('front/video_details.html.twig',[
+            'video'=>$repo->videoDetails($video),
+        ]);
     }
 
     #[Route('/search-results/{page}', name: 'search_results', defaults:["page"=>1], methods: ['GET'])]
@@ -79,9 +87,30 @@ class FrontController extends AbstractController
     }
 
     #[Route('/register', name: 'register')]
-    public function register()
+    public function register(Request $request, UserPasswordHasherInterface $passwordHasher)
     {
-        return $this->render('front/register.html.twig');
+        $user = new User;
+        $form = $this->createForm(UserType::class, $user);
+        $form->handleRequest($request);
+        if ($form->isSubmitted() && $form->isValid())
+        {
+            $entityManager = $this->doctrine->getManager();
+            $user->setName($request->request->all('user')['name']);
+            $user->setLastName($request->request->all('user')['lastName']);
+            $user->setEmail($request->request->all('user')['email']);
+            $password=$passwordHasher->hashPassword($user, $request->request->all('user')['password']['first']);
+            $user->setPassword($password);
+            $user->setRoles(['ROLE_USER']);
+
+            $entityManager->persist($user);
+            $entityManager->flush();
+
+            return $this->redirectToRoute('admin_main');
+        }
+
+        return $this->render('front/register.html.twig', [
+            'form'=>$form->createView(),
+        ]);
     }
 
     #[Route('/login', name: 'login')]
@@ -102,6 +131,25 @@ class FrontController extends AbstractController
     public function payment()
     {
         return $this->render('front/payment.html.twig');
+    }
+
+    #[Route("/new-comment/{video}", methods: ["POST"], name: "new_comment")]
+    public function newComment(Video $video, Request $request)
+    {
+        $this->denyAccessUnlessGranted('IS_AUTHENTICATED_REMEMBERED');
+        if( !empty(trim($request->request->get('comment'))))
+        {
+            $comment = new Comment();
+            $comment->setContent($request->request->get('comment'));
+            $comment->setUser($this->getUser());
+            $comment->setVideo($video);
+
+            $entitymanager = $this->doctrine->getManager();
+            $entitymanager->persist($comment);
+            $entitymanager->flush();
+        }
+
+        return $this->redirectToRoute('video_details', ['video'=>$video->getId()]);
     }
 
     public function mainCategories()
